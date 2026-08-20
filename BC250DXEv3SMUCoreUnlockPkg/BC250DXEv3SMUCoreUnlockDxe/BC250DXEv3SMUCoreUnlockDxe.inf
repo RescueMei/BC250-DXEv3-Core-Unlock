@@ -27,6 +27,8 @@
 
 [Protocols]
   gMeiMeiDXEv3CoreUnlockProtocolGuid
+  gMeiMeiDXEv3SmuUnlockProtocolGuid
 
 [Depex]
-  gEfiVariableArchProtocolGuid
+  gEfiVariableArchProtocolGuid AND
+  gMeiMeiDXEv3SmuUnlockProtocolGuid

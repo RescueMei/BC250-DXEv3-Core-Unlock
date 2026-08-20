@@ -11,3 +11,9 @@
   ## Protocol published by the MeiMeiDXEv3 SMU Core Unlock driver; used to
   #  read the learned factory core presence mask.
   gMeiMeiDXEv3CoreUnlockProtocolGuid = { 0x687319be, 0x5bc5, 0x44a7, { 0x8e, 0x60, 0xe5, 0xf1, 0xe5, 0xfd, 0x01, 0x68 } }
+
+  ## Marker protocol produced by the BC-250 DXEv3 SMU secure-access unlock
+  #  driver (BC250-DXEv3-SMU-Unlock).  Vendored here so this package can list
+  #  the GUID in its [Depex] without referencing that package.  Keep this GUID
+  #  in sync with the SMU-Unlock driver's .dec declaration.
+  gMeiMeiDXEv3SmuUnlockProtocolGuid = { 0xA7C3D5E1, 0x94B2, 0x4C6D, { 0x8F, 0x1A, 0x3B, 0x5D, 0x7E, 0x9C, 0x2F, 0x68 } }
