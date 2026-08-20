@@ -1,0 +1,28 @@
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = MeiMeiDXEv3_SMU_CoreUnlock
+  FILE_GUID                      = 7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 0.1
+  ENTRY_POINT                    = BC250DXEv3SMUCoreUnlockEntryPoint
+
+[Sources]
+  BC250DXEv3SMUCoreUnlockDxe.c
+  Bc250SmuMailbox.c
+  Bc250SmuMailbox.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  BC250DXEv3SMUCoreUnlockPkg/BC250DXEv3SMUCoreUnlockPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PciSegmentLib
+  TimerLib
+  UefiDriverEntryPoint
+  UefiRuntimeServicesTableLib
+
+[Depex]
+  gEfiVariableArchProtocolGuid
