@@ -4,10 +4,12 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/TimerLib.h>
+#include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 
 #include <BC250ColdBoot.h>
 #include <MeiMeiDXEv3ConfigVar.h>
+#include <MeiMeiDXEv3CoreUnlockProtocol.h>
 
 #include "Bc250SmuMailbox.h"
 
@@ -47,7 +49,15 @@
 // Desired mask by configuration:
 //   disabled -> stored factory mask
 //   enabled  -> 0xFF (all cores)
-//   custom   -> per-core mask from the configuration
+//   custom   -> per-core mask from the configuration, but only when that mask
+//               satisfies the CCX0/CCX1 rules below. An invalid custom mask is
+//               rejected: CoreUnlock is persisted as disabled and the known
+//               factory mask is written instead.
+//
+// Custom-mask validity (cores 0-3 = CCX0, cores 4-7 = CCX1):
+//   * CCX0 must always have at least one core enabled.
+//   * CCX1 must have the same number of cores enabled as CCX0, unless CCX1
+//     has zero cores enabled.
 // A warm reset is issued only when the register differs from the desired mask.
 //
 //
@@ -71,6 +81,23 @@ STATIC CONST CHAR16  mColdBootRequestMessage[] =
   L"Learning factory core mask; performing one-time cold reboot.";
 
 #define MEIMEIDXEV3_DELAY_AFTER_WRITE_US  50000U
+
+//
+// CCX membership of the eight cores in the core presence mask.
+//   CCX0: cores 0-3 -> bits 0-3
+//   CCX1: cores 4-7 -> bits 4-7
+//
+#define BC250_CCX0_CORE_BITS  0x0FU
+#define BC250_CCX1_CORE_BITS  0xF0U
+
+//
+// Core-unlock protocol instance published so other DXE drivers can read the
+// learned factory core mask. Installed unconditionally in the entry point;
+// GetFactoryMask re-reads and CRC-validates the persisted factory record on
+// every call.
+//
+STATIC MEIMEIDXEV3_CORE_UNLOCK_PROTOCOL  mCoreUnlockProtocol;
+STATIC EFI_HANDLE                        mCoreUnlockProtocolHandle = NULL;
 
 /**
   Read the MeiMeiDXEv3CoreVar configuration.
@@ -254,6 +281,32 @@ WriteFactoryRecord (
                 MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES,
                 sizeof (FACTORY_MASK_RECORD),
                 Record
+                );
+}
+
+/**
+  Persist the core configuration to MeiMeiDXEv3CoreVar.
+
+  Used to set CoreUnlock back to DISABLED when an invalid custom mask is
+  rejected. The full 9-byte structure is rewritten so the menu driver's
+  variable layout is preserved.
+
+  @param[in]  Config  Core configuration to persist.
+
+  @retval EFI_STATUS  Result of SetVariable().
+**/
+STATIC
+EFI_STATUS
+WriteCoreConfig (
+  IN CONST CORE_CONFIG  *Config
+  )
+{
+  return gRT->SetVariable (
+                MEIMEIDXEV3_CORE_VAR_NAME,
+                &gMeiMeiDXEv3ConfigVarGuid,
+                MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES,
+                sizeof (CORE_CONFIG),
+                (VOID *)Config
                 );
 }
 
@@ -444,6 +497,100 @@ LearnFactoryMask (
 }
 
 /**
+  Count the number of enabled cores in a core presence mask byte.
+
+  @param[in]  Mask  Core presence mask low byte.
+
+  @return  Number of set bits (0..8).
+**/
+STATIC
+UINTN
+CountCoreBits (
+  IN UINT8  Mask
+  )
+{
+  UINTN  Count;
+  UINTN  Bit;
+
+  Count = 0;
+  for (Bit = 0; Bit < 8; Bit++) {
+    if ((Mask & (UINT8)(1U << Bit)) != 0) {
+      Count++;
+    }
+  }
+
+  return Count;
+}
+
+/**
+  Determine whether a custom core presence mask is a valid CCX0/CCX1
+  configuration.
+
+  Cores 0-3 belong to CCX0 (bits 0-3) and cores 4-7 belong to CCX1 (bits 4-7).
+  A mask is valid only when:
+    * CCX0 has at least one core enabled, and
+    * CCX1 has the same number of cores enabled as CCX0, or CCX1 has no
+      cores enabled at all.
+
+  @param[in]  Mask  Core presence mask low byte.
+
+  @retval TRUE   The mask is a valid CCX0/CCX1 configuration.
+  @retval FALSE  The mask violates the CCX0/CCX1 rules.
+**/
+STATIC
+BOOLEAN
+IsCoreMaskValid (
+  IN UINT8  Mask
+  )
+{
+  UINTN  Ccx0Count;
+  UINTN  Ccx1Count;
+
+  Ccx0Count = CountCoreBits ((UINT8)(Mask & BC250_CCX0_CORE_BITS));
+  Ccx1Count = CountCoreBits ((UINT8)(Mask & BC250_CCX1_CORE_BITS));
+
+  //
+  // CCX0 must always have at least one core enabled.
+  //
+  if (Ccx0Count == 0) {
+    return FALSE;
+  }
+
+  //
+  // CCX1 must have the same number of cores enabled as CCX0, unless CCX1
+  // has zero cores enabled.
+  //
+  if (Ccx1Count != 0 && Ccx1Count != Ccx0Count) {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+  Assemble the custom core presence mask low byte from the per-core toggles.
+
+  @param[in]  Config  Core configuration.
+
+  @return  Core presence mask low byte built from Core0..Core7.
+**/
+STATIC
+UINT8
+ComputeCustomMask (
+  IN CONST CORE_CONFIG  *Config
+  )
+{
+  return (UINT8)((Config->Core0      ) |
+                 (Config->Core1 << 1 ) |
+                 (Config->Core2 << 2 ) |
+                 (Config->Core3 << 3 ) |
+                 (Config->Core4 << 4 ) |
+                 (Config->Core5 << 5 ) |
+                 (Config->Core6 << 6 ) |
+                 (Config->Core7 << 7 ));
+}
+
+/**
   Compute the desired core mask low byte from the core configuration.
 
   @param[in]  Config       Core configuration.
@@ -466,14 +613,7 @@ ComputeDesiredMask (
       break;
 
     case CORE_UNLOCK_CUSTOM:
-      Desired = (UINT8)((Config->Core0      ) |
-                        (Config->Core1 << 1 ) |
-                        (Config->Core2 << 2 ) |
-                        (Config->Core3 << 3 ) |
-                        (Config->Core4 << 4 ) |
-                        (Config->Core5 << 5 ) |
-                        (Config->Core6 << 6 ) |
-                        (Config->Core7 << 7 ));
+      Desired = ComputeCustomMask (Config);
       break;
 
     case CORE_UNLOCK_DISABLED:
@@ -548,12 +688,68 @@ ApplyCoreMask (
 }
 
 /**
+  Core-unlock protocol: read the learned factory core presence mask.
+
+  Re-reads the persisted factory record and validates its CRC-32 fingerprint
+  on every call, matching the driver's own learning check.
+
+  @param[in]  This          Protocol instance pointer.
+  @param[out] FactoryMask   Receives the factory core presence mask low byte.
+
+  @retval EFI_SUCCESS       The factory mask is available.
+  @retval EFI_NOT_FOUND     No valid factory record yet (learning cold boot
+                            pending).
+  @retval others            The factory record could not be read.
+**/
+STATIC
+EFI_STATUS
+EFIAPI
+MeiMeiDxEv3GetFactoryMask (
+  IN  MEIMEIDXEV3_CORE_UNLOCK_PROTOCOL  *This,
+  OUT UINT8                              *FactoryMask
+  )
+{
+  EFI_STATUS           Status;
+  FACTORY_MASK_RECORD  Record;
+  BOOLEAN              HaveRecord;
+  BOOLEAN              RecordValid;
+
+  if (FactoryMask == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *FactoryMask = 0;
+
+  Status = ReadFactoryRecord (&Record, &HaveRecord);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  RecordValid = FALSE;
+  if (HaveRecord) {
+    if (ComputeMaskFingerprint ((UINT32)Record.FactoryMask) == Record.OriginalCrc32) {
+      RecordValid = TRUE;
+    }
+  }
+
+  if (!RecordValid) {
+    return EFI_NOT_FOUND;
+  }
+
+  *FactoryMask = Record.FactoryMask;
+  return EFI_SUCCESS;
+}
+
+/**
   DXE entry point.
 
   The driver:
+    * publishes the core-unlock protocol for reading the factory mask,
     * reads the core configuration,
     * acquires the factory mask (one-shot cold boot when the stored record is
       absent or fails its CRC check),
+    * rejects an invalid custom core mask by persisting CoreUnlock as DISABLED
+      and falling back to the factory mask,
     * computes the desired mask (factory when disabled, 0xFF when enabled,
       per-core when custom),
     * writes it through the SMU protected window when it differs,
@@ -579,9 +775,32 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   BOOLEAN      HaveFactory;
   BOOLEAN      ColdBooted;
   BOOLEAN      MaskChanged;
+  UINT8        CustomMask;
   UINT8        DesiredMask;
 
   DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: entry\n"));
+
+  //
+  // Publish the core-unlock protocol before any early returns so a consumer
+  // Depex on the protocol GUID is satisfied on every boot, including the
+  // one-shot cold boot that learns the factory mask. GetFactoryMask reports
+  // EFI_NOT_FOUND until that cycle has persisted a record.
+  //
+  if (mCoreUnlockProtocolHandle == NULL) {
+    mCoreUnlockProtocol.GetFactoryMask = MeiMeiDxEv3GetFactoryMask;
+    Status = gBS->InstallProtocolInterface (
+                    &mCoreUnlockProtocolHandle,
+                    &gMeiMeiDXEv3CoreUnlockProtocolGuid,
+                    EFI_NATIVE_INTERFACE,
+                    &mCoreUnlockProtocol
+                    );
+    if (EFI_ERROR (Status)) {
+      // Non-fatal: the mask-write path does not depend on the protocol.
+      DEBUG ((DEBUG_ERROR,
+              "BC250DXEv3SMUCoreUnlock: failed to install core-unlock protocol: %r\n",
+              Status));
+    }
+  }
 
   //
   // Read the core configuration.
@@ -613,6 +832,32 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   if (!HaveFactory) {
     DEBUG ((DEBUG_WARN, "BC250DXEv3SMUCoreUnlock: no factory mask available\n"));
     return EFI_SUCCESS;
+  }
+
+  //
+  // Reject a custom mask that violates the CCX0/CCX1 rules. The setting is
+  // persisted as DISABLED so the driver stays disabled on later boots, and
+  // the flow falls through to the disabled path, which writes the known
+  // factory mask instead of the invalid custom mask.
+  //
+  if (Config.CoreUnlock == CORE_UNLOCK_CUSTOM) {
+    CustomMask = ComputeCustomMask (&Config);
+    if (!IsCoreMaskValid (CustomMask)) {
+      DEBUG ((DEBUG_WARN,
+              "BC250DXEv3SMUCoreUnlock: invalid custom core mask 0x%02x "
+              "(CCX0 must keep >=1 core; CCX1 must match CCX0 or be empty), "
+              "reverting CoreUnlock to disabled\n",
+              CustomMask));
+
+      Config.CoreUnlock = CORE_UNLOCK_DISABLED;
+      Status = WriteCoreConfig (&Config);
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_ERROR,
+                "BC250DXEv3SMUCoreUnlock: failed to persist CoreUnlock=disabled: %r\n",
+                Status));
+        return EFI_SUCCESS;
+      }
+    }
   }
 
   DesiredMask = ComputeDesiredMask (&Config, FactoryMask);

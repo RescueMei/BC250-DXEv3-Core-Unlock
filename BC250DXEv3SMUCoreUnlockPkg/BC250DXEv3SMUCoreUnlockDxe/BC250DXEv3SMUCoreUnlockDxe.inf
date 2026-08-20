@@ -21,8 +21,12 @@
   DebugLib
   PciSegmentLib
   TimerLib
+  UefiBootServicesTableLib
   UefiDriverEntryPoint
   UefiRuntimeServicesTableLib
+
+[Protocols]
+  gMeiMeiDXEv3CoreUnlockProtocolGuid
 
 [Depex]
   gEfiVariableArchProtocolGuid
