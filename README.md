@@ -4,12 +4,13 @@ My v3 SMU Core Unlock DXE Driver. Uses arbitrary writes to the core mask
 through the SMU's protected mem64 window (Queue 3 messages `0x2B`/`0x2C`) instead
 of the previous exploit that could only write `0xFF`.
 
+Based on set_core_mask.py in https://github.com/rw-r-r-0644/bc250-smu-unlock
+
 ## Package
 
 `BC250DXEv3SMUCoreUnlockPkg/` builds the DXE module `MeiMeiDXEv3_SMU_CoreUnlock`.
 
-This driver is the only component that manipulates the core presence mask
-(SMN `0x5A870`). It consumes the `MeiMeiDXEv3CoreVar` configuration published by
+This driver is uses the `MeiMeiDXEv3CoreVar` configuration published by
 the `BC250-DXEv3-Menu-Driver`:
 
 | CoreUnlock | Action |
@@ -49,10 +50,10 @@ captures it with a one-shot cold boot:
    it as `MeiMeiDXEv3CoreFactoryMaskVar`, clear the learn flag, then run the
    normal write logic.
 
-The `MeiMeiDXEv3RequestColdBoot` variable is volatile, so it cannot loop. Its
-payload is a `CHAR16` message displayed in the cold-boot driver's recovery
-countdown box; this driver supplies `"Learning factory core mask; performing
-one-time cold reboot."` so the user can see why the board is cycling once.
+The `MeiMeiDXEv3RequestColdBoot` variable has a payload of a `CHAR16` message
+displayed in the cold-boot driver's recovery countdown box; this driver supplies
+`"Learning factory core mask; performing one-time cold reboot."` 
+so the user can see why the board is cycling once.
 
 ## Variables
 
@@ -150,9 +151,3 @@ A container build (podman) produces:
 For a host build, set `NO_CONTAINER=1` and `EDK2_DIR=/path/to/edk2`.
 
 The `.ffs` can be inserted into an AMI DXE firmware volume with UEFITool.
-
-## Reference
-
-- `Ref/BC250-DXEv2-SMU-Core-Unlock`: the v2 driver this is based on.
-- `Ref/bc250-smu-unlock`: the Linux userspace SMU unlock / arbitrary read-write
-  reference (`set_core_mask.py`).
