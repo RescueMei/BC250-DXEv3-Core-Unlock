@@ -1,32 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ONLY PODMAN HAS BEEN TESTED!!!
-# May work for docker, but I don't run docker.
-# Containerized build helper for generating both the raw DXE PE32 image (.efi)
-# and a firmware-file-system driver (.ffs) suitable for insertion into an AMI
-# DXE firmware volume with UEFITool.
+# Generic build helper for a BC250 DXV3 driver package.  This script is
+# identical in every project; per-project settings are loaded from the
+# build.conf file that sits next to it.
+#
+# It generates both the raw DXE PE32 image (.efi) and a firmware-file-system
+# driver (.ffs) suitable for insertion into an AMI DXE firmware volume with
+# UEFITool.
 #
 # Default behavior uses the Tianocore Fedora 41 development container so the
-# build does not depend on a pre-existing host edk2 checkout. A host build mode
-# is also available by setting NO_CONTAINER=1 and EDK2_DIR.
+# build does not depend on a pre-existing host edk2 checkout. A host build
+# mode is also available by setting NO_CONTAINER=1 and EDK2_DIR.
+#
+# Recognized environment overrides: ARCH, TARGET, TOOL_CHAIN_TAG,
+# CONTAINER_ENGINE, EDK2_IMAGE, EDK2_REPO, EDK2_REF, NO_CONTAINER, EDK2_DIR.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$SCRIPT_DIR"
-PKG_DIR="$REPO_DIR/BC250DXEv3SMUCoreUnlockPkg"
-PLATFORM_DSC="$PKG_DIR/BC250DXEv3SMUCoreUnlockPkg.dsc"
-OUTPUT_DIR="$REPO_DIR/Build/Output"
-BUILD_PACKAGE_DIR="MeiMeiDXEv3_SMU_CoreUnlock"
-MODULE_INFS=(
-  "$PKG_DIR/BC250DXEv3SMUCoreUnlockDxe/BC250DXEv3SMUCoreUnlockDxe.inf"
-)
-MODULE_NAMES=(
-  "MeiMeiDXEv3_SMU_CoreUnlock"
-)
-MODULE_GUIDS=(
-  "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d"
-)
 
+# ---- Load per-project configuration ------------------------------------
+
+CONF_PATH="$REPO_DIR/build.conf"
+if [[ ! -f "$CONF_PATH" ]]; then
+  echo "error: missing configuration file: $CONF_PATH" >&2
+  echo "Each project must provide a build.conf next to build_ffs.sh" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$CONF_PATH"
+
+required_vars=(PKG_DIR PLATFORM_DSC BUILD_PACKAGE_DIR MODULE_NAME MODULE_INF MODULE_GUID)
+for var in "${required_vars[@]}"; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "error: build.conf is missing required variable: $var" >&2
+    exit 1
+  fi
+done
+
+for path_var in PKG_DIR PLATFORM_DSC MODULE_INF; do
+  if [[ ! -e "$REPO_DIR/${!path_var}" ]]; then
+    echo "error: build.conf ${path_var} does not exist: $REPO_DIR/${!path_var}" >&2
+    exit 1
+  fi
+done
+
+# ---- Shared defaults ----------------------------------------------------
+
+OUTPUT_DIR="$REPO_DIR/Build/Output"
 ARCH="${ARCH:-X64}"
 TARGET="${TARGET:-RELEASE}"
 TOOL_CHAIN_TAG="${TOOL_CHAIN_TAG:-CLANGDWARF}"
@@ -41,8 +62,15 @@ CACHE_DIR="$REPO_DIR/.cache"
 EDK2_CACHE_DIR="$CACHE_DIR/edk2"
 CONTAINER_CACHE_ROOT="/cache"
 CONTAINER_EDK2_DIR="$CONTAINER_CACHE_ROOT/edk2"
+CONTAINER_WORKSPACE="/workspace/$(basename "$REPO_DIR")"
+
+# Optional flags from build.conf.
+SUBMODULES_RECURSIVE="${SUBMODULES_RECURSIVE:-0}"
+SUBMODULES_EXTRA="${SUBMODULES_EXTRA:-}"
+BUILD_MODULE="${BUILD_MODULE:-0}"
 
 find_basetool() {
+  # Locate a built EDK II utility in either its wrapper or native binary path.
   local tool_name="$1"
   local candidate
 
@@ -59,6 +87,9 @@ find_basetool() {
 }
 
 source_edksetup() {
+  # edksetup.sh changes shell variables and may alter errexit/nounset state.
+  # Temporarily relaxing both options lets upstream setup scripts complete;
+  # this function restores the caller's original shell-option state afterward.
   local edksetup_path="$1"
   local had_nounset=0
   local had_errexit=0
@@ -86,19 +117,24 @@ source_edksetup() {
 }
 
 generate_ffs() {
+  # Convert the built PE/COFF EFI image into a driver-type firmware file.
+  # When the module produced a depex during the build, it is wrapped into a
+  # DXE_DEPEX section (kept in sync with the INF [Depex] and any library
+  # depex) and placed first in the FFS.
   local efi_path="$1"
-  local module_name="$2"
-  local module_guid="$3"
-  local gensec="$4"
-  local genffs="$5"
-  local pe32_sec ui_sec ffs_path efi_copy
+  local gensec="$2"
+  local genffs="$3"
+  local depex_path="${4:-}"
+  local pe32_sec ui_sec depex_sec ffs_path efi_copy
+  local -a genffs_args=()
 
   mkdir -p "$OUTPUT_DIR"
 
-  pe32_sec="$OUTPUT_DIR/${module_name}.pe32.sec"
-  ui_sec="$OUTPUT_DIR/${module_name}.ui.sec"
-  ffs_path="$OUTPUT_DIR/${module_name}.ffs"
-  efi_copy="$OUTPUT_DIR/${module_name}.efi"
+  pe32_sec="$OUTPUT_DIR/${MODULE_NAME}.pe32.sec"
+  ui_sec="$OUTPUT_DIR/${MODULE_NAME}.ui.sec"
+  depex_sec="$OUTPUT_DIR/${MODULE_NAME}.depex.sec"
+  ffs_path="$OUTPUT_DIR/${MODULE_NAME}.ffs"
+  efi_copy="$OUTPUT_DIR/${MODULE_NAME}.efi"
 
   cp "$efi_path" "$efi_copy"
 
@@ -107,17 +143,27 @@ generate_ffs() {
     -o "$pe32_sec" \
     "$efi_copy"
 
+  if [[ -n "$depex_path" && -f "$depex_path" ]]; then
+    "$gensec" \
+      -s EFI_SECTION_DXE_DEPEX \
+      -o "$depex_sec" \
+      "$depex_path"
+    genffs_args+=("-i" "$depex_sec")
+  fi
+
+  genffs_args+=("-i" "$pe32_sec")
+
   "$gensec" \
     -s EFI_SECTION_USER_INTERFACE \
-    -n "$module_name" \
+    -n "$MODULE_NAME" \
     -o "$ui_sec"
+  genffs_args+=("-i" "$ui_sec")
 
   "$genffs" \
     -t EFI_FV_FILETYPE_DRIVER \
-    -g "$module_guid" \
+    -g "$MODULE_GUID" \
     -o "$ffs_path" \
-    -i "$pe32_sec" \
-    -i "$ui_sec"
+    "${genffs_args[@]}"
 
   echo "Build complete:"
   echo "  EFI: $efi_copy"
@@ -125,7 +171,9 @@ generate_ffs() {
 }
 
 build_with_host_edk2() {
-  local gensec genffs efi_path index
+  # Build using a caller-provided edk2 checkout.  This path is useful for local
+  # development and avoids container startup, but requires BaseTools to exist.
+  local gensec genffs efi_path depex_path
 
   if [[ -z "${EDK2_DIR:-}" ]]; then
     echo "error: set EDK2_DIR to your edk2 workspace root when NO_CONTAINER=1" >&2
@@ -146,6 +194,7 @@ build_with_host_edk2() {
   export WORKSPACE="$EDK2_DIR"
   export PACKAGES_PATH="$REPO_DIR:$EDK2_DIR${PACKAGES_PATH:+:$PACKAGES_PATH}"
   export PYTHON_COMMAND="${PYTHON_COMMAND:-python3}"
+  export EDK_TOOLS_PATH="$EDK2_DIR/BaseTools"
 
   source_edksetup "$EDK2_DIR/edksetup.sh"
 
@@ -157,22 +206,30 @@ build_with_host_edk2() {
     exit 1
   fi
 
-  build -a "$ARCH" -b "$TARGET" -t "$TOOL_CHAIN_TAG" -p "$PLATFORM_DSC"
+  if [[ "$BUILD_MODULE" == "1" ]]; then
+    build -a "$ARCH" -b "$TARGET" -t "$TOOL_CHAIN_TAG" -p "$REPO_DIR/$PLATFORM_DSC" -m "$REPO_DIR/$MODULE_INF"
+  else
+    build -a "$ARCH" -b "$TARGET" -t "$TOOL_CHAIN_TAG" -p "$REPO_DIR/$PLATFORM_DSC"
+  fi
 
-  for index in "${!MODULE_NAMES[@]}"; do
-    efi_path="$EDK2_DIR/Build/${BUILD_PACKAGE_DIR}/${TARGET}_${TOOL_CHAIN_TAG}/$ARCH/${MODULE_NAMES[$index]}.efi"
-    if [[ ! -f "$efi_path" ]]; then
-      efi_path="$(find "$EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAMES[$index]}.efi" | head -n 1)"
-    fi
-    if [[ -z "$efi_path" || ! -f "$efi_path" ]]; then
-      echo "error: failed to locate ${MODULE_NAMES[$index]}.efi" >&2
-      exit 1
-    fi
-    generate_ffs "$efi_path" "${MODULE_NAMES[$index]}" "${MODULE_GUIDS[$index]}" "$gensec" "$genffs"
-  done
+  efi_path="$EDK2_DIR/Build/${BUILD_PACKAGE_DIR}/${TARGET}_${TOOL_CHAIN_TAG}/$ARCH/${MODULE_NAME}.efi"
+  if [[ ! -f "$efi_path" ]]; then
+    efi_path="$(find "$EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAME}.efi" | head -n 1 || true)"
+  fi
+  if [[ -z "$efi_path" || ! -f "$efi_path" ]]; then
+    echo "error: failed to locate ${MODULE_NAME}.efi" >&2
+    exit 1
+  fi
+
+  depex_path="$(find "$EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAME}.depex" | head -n 1 || true)"
+
+  generate_ffs "$efi_path" "$gensec" "$genffs" "$depex_path"
 }
 
 build_with_container() {
+  # Run the complete build inside the configured Tianocore container.  The
+  # repository and a persistent edk2 cache are mounted so source changes remain
+  # local and repeated builds do not reclone the toolchain unnecessarily.
   if ! command -v "$CONTAINER_ENGINE" >/dev/null 2>&1; then
     echo "error: container engine not found: $CONTAINER_ENGINE" >&2
     exit 1
@@ -181,9 +238,9 @@ build_with_container() {
   mkdir -p "$CACHE_DIR" "$EDK2_CACHE_DIR" "$OUTPUT_DIR"
 
   "$CONTAINER_ENGINE" run --rm \
-    -v "$REPO_DIR:/workspace/BC250-DXEv3-Core-Unlock:Z" \
+    -v "$REPO_DIR:$CONTAINER_WORKSPACE:Z" \
     -v "$CACHE_DIR:$CONTAINER_CACHE_ROOT:Z" \
-    -w /workspace/BC250-DXEv3-Core-Unlock \
+    -w "$CONTAINER_WORKSPACE" \
     -e ARCH="$ARCH" \
     -e TARGET="$TARGET" \
     -e TOOL_CHAIN_TAG="$TOOL_CHAIN_TAG" \
@@ -192,12 +249,23 @@ build_with_container() {
     -e BUILD_PACKAGE_DIR="$BUILD_PACKAGE_DIR" \
     -e CONTAINER_CACHE_ROOT="$CONTAINER_CACHE_ROOT" \
     -e CONTAINER_EDK2_DIR="$CONTAINER_EDK2_DIR" \
+    -e CONTAINER_WORKSPACE="$CONTAINER_WORKSPACE" \
+    -e MODULE_NAME="$MODULE_NAME" \
+    -e MODULE_GUID="$MODULE_GUID" \
+    -e MODULE_INF="$MODULE_INF" \
+    -e PLATFORM_DSC="$PLATFORM_DSC" \
+    -e SUBMODULES_RECURSIVE="$SUBMODULES_RECURSIVE" \
+    -e SUBMODULES_EXTRA="$SUBMODULES_EXTRA" \
+    -e BUILD_MODULE="$BUILD_MODULE" \
     "$EDK2_IMAGE" \
     bash -lc '
       set -euo pipefail
 
       mkdir -p "$CONTAINER_CACHE_ROOT"
 
+      # Refresh through a temporary checkout, then swap it into place.  This
+      # avoids leaving a half-cloned cache if the network or git operation
+      # fails.
       refresh_edk2_checkout() {
         local tmp_dir="${CONTAINER_EDK2_DIR}.tmp.$$"
 
@@ -213,6 +281,8 @@ build_with_container() {
         rm -rf "$CONTAINER_EDK2_DIR.old"
       }
 
+      # Validate the cache before using it.  Fetch/checkout failures fall back
+      # to a clean clone so stale or interrupted state cannot poison the build.
       if [[ ! -e "$CONTAINER_EDK2_DIR" ]]; then
         refresh_edk2_checkout
       elif [[ ! -d "$CONTAINER_EDK2_DIR/.git" ]]; then
@@ -242,17 +312,25 @@ build_with_container() {
         cd "$CONTAINER_EDK2_DIR"
       fi
 
-      # Only initialize the submodules required to build BaseTools and MdePkg
-      # for this driver. A full recursive update can fail on unrelated optional
-      # nested dependencies in upstream edk2 (for example OpenSSL test trees).
-      git submodule update --init \
-        BaseTools/Source/C/BrotliCompress/brotli \
-        MdePkg/Library/BaseFdtLib/libfdt \
-        MdePkg/Library/MipiSysTLib/mipisyst
+      if [[ "$SUBMODULES_RECURSIVE" == "1" ]]; then
+        git submodule update --init --recursive
+      else
+        # Only initialize the submodules required to build BaseTools and
+        # MdePkg for this driver, plus any project-specific extras listed in
+        # SUBMODULES_EXTRA. A full recursive update can fail on unrelated
+        # optional nested dependencies in upstream edk2 (for example the
+        # broken SecurityPkg/SpdmLib/libspdm chain or OpenSSL test trees).
+        # shellcheck disable=SC2086
+        git submodule update --init \
+          BaseTools/Source/C/BrotliCompress/brotli \
+          MdePkg/Library/BaseFdtLib/libfdt \
+          MdePkg/Library/MipiSysTLib/mipisyst \
+          $SUBMODULES_EXTRA
+      fi
       make -C BaseTools/Source/C -j"$(nproc)"
 
       export WORKSPACE="$CONTAINER_EDK2_DIR"
-      export PACKAGES_PATH=/workspace/BC250-DXEv3-Core-Unlock:"$CONTAINER_EDK2_DIR"
+      export PACKAGES_PATH="$CONTAINER_WORKSPACE:$CONTAINER_EDK2_DIR"
       export PYTHON_COMMAND="${PYTHON_COMMAND:-python3}"
       export EDK_TOOLS_PATH="$CONTAINER_EDK2_DIR/BaseTools"
 
@@ -305,31 +383,68 @@ build_with_container() {
 
       echo "Running EDK II build..."
 
-      build \
-        -a "$ARCH" \
-        -b "$TARGET" \
-        -t "$TOOL_CHAIN_TAG" \
-        -p /workspace/BC250-DXEv3-Core-Unlock/BC250DXEv3SMUCoreUnlockPkg/BC250DXEv3SMUCoreUnlockPkg.dsc \
-        -Y PCD
-      NAMES=(MeiMeiDXEv3_SMU_CoreUnlock)
-      GUIDS=(7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d)
-      for INDEX in 0; do
-        MODULE_NAME="${NAMES[$INDEX]}"
-        EFI_PATH="$CONTAINER_EDK2_DIR/Build/${BUILD_PACKAGE_DIR}/${TARGET}_${TOOL_CHAIN_TAG}/${ARCH}/${MODULE_NAME}.efi"
-        if [[ ! -f "$EFI_PATH" ]]; then
-          EFI_PATH="$(find "$CONTAINER_EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAME}.efi" | head -n 1)"
-        fi
-        if [[ -z "$EFI_PATH" || ! -f "$EFI_PATH" ]]; then
-          echo "error: failed to locate built EFI image: $MODULE_NAME" >&2
-          exit 1
-        fi
-        mkdir -p /workspace/BC250-DXEv3-Core-Unlock/Build/Output
-        cp "$EFI_PATH" "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.efi"
-        "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenSec" -s EFI_SECTION_PE32 -o "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.pe32.sec" "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.efi"
-        "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenSec" -s EFI_SECTION_USER_INTERFACE -n "$MODULE_NAME" -o "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.ui.sec"
-        "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenFfs" -t EFI_FV_FILETYPE_DRIVER -g "${GUIDS[$INDEX]}" -o "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.ffs" -i "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.pe32.sec" -i "/workspace/BC250-DXEv3-Core-Unlock/Build/Output/${MODULE_NAME}.ui.sec"
-        echo "Build complete: $MODULE_NAME"
-      done
+      if [[ "$BUILD_MODULE" == "1" ]]; then
+        build \
+          -a "$ARCH" \
+          -b "$TARGET" \
+          -t "$TOOL_CHAIN_TAG" \
+          -p "$CONTAINER_WORKSPACE/$PLATFORM_DSC" \
+          -m "$CONTAINER_WORKSPACE/$MODULE_INF" \
+          -Y PCD
+      else
+        build \
+          -a "$ARCH" \
+          -b "$TARGET" \
+          -t "$TOOL_CHAIN_TAG" \
+          -p "$CONTAINER_WORKSPACE/$PLATFORM_DSC" \
+          -Y PCD
+      fi
+
+      EFI_PATH="$CONTAINER_EDK2_DIR/Build/${BUILD_PACKAGE_DIR}/${TARGET}_${TOOL_CHAIN_TAG}/${ARCH}/${MODULE_NAME}.efi"
+      if [[ ! -f "$EFI_PATH" ]]; then
+        EFI_PATH="$(find "$CONTAINER_EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAME}.efi" | head -n 1 || true)"
+      fi
+      if [[ -z "$EFI_PATH" || ! -f "$EFI_PATH" ]]; then
+        echo "error: failed to locate built EFI image: $MODULE_NAME" >&2
+        exit 1
+      fi
+
+      # Use the depex generated by the build (from the INF [Depex] section and
+      # any linked library depex) rather than any hand-maintained copy.  It is
+      # absent for modules without a depex dependency.
+      DEPEX_PATH="$(find "$CONTAINER_EDK2_DIR/Build/${BUILD_PACKAGE_DIR}" -type f -name "${MODULE_NAME}.depex" | head -n 1 || true)"
+
+      mkdir -p "$CONTAINER_WORKSPACE/Build/Output"
+      cp "$EFI_PATH" "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.efi"
+
+      "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenSec" \
+        -s EFI_SECTION_PE32 \
+        -o "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.pe32.sec" \
+        "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.efi"
+
+      GENFFS_ARGS=()
+      if [[ -n "$DEPEX_PATH" ]]; then
+        "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenSec" \
+          -s EFI_SECTION_DXE_DEPEX \
+          -o "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.depex.sec" \
+          "$DEPEX_PATH"
+        GENFFS_ARGS+=(-i "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.depex.sec")
+      fi
+      GENFFS_ARGS+=(-i "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.pe32.sec")
+
+      "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenSec" \
+        -s EFI_SECTION_USER_INTERFACE \
+        -n "$MODULE_NAME" \
+        -o "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.ui.sec"
+      GENFFS_ARGS+=(-i "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.ui.sec")
+
+      "$CONTAINER_EDK2_DIR/BaseTools/BinWrappers/PosixLike/GenFfs" \
+        -t EFI_FV_FILETYPE_DRIVER \
+        -g "$MODULE_GUID" \
+        -o "$CONTAINER_WORKSPACE/Build/Output/${MODULE_NAME}.ffs" \
+        "${GENFFS_ARGS[@]}"
+
+      echo "Build complete: $MODULE_NAME"
     '
 }
 
