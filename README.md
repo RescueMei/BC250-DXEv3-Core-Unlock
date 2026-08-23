@@ -8,7 +8,7 @@ Based on set_core_mask.py in https://github.com/rw-r-r-0644/bc250-smu-unlock
 
 ## Package
 
-`BC250DXEv3SMUCoreUnlockPkg/` builds the DXE module `MeiMeiDXEv3_SMU_CoreUnlock`.
+`BC250DXEv3SMUCoreUnlockPkg/` builds the DXE module `MeiMeiDXEv3_SMU_Core_Unlock`.
 
 This driver is uses the `MeiMeiDXEv3CoreVar` configuration published by
 the `BC250-DXEv3-Menu-Driver`:
@@ -145,8 +145,8 @@ GUID in its `[Protocols]`:
 
 A container build (podman) produces:
 
-- `Build/Output/MeiMeiDXEv3_SMU_CoreUnlock.efi`
-- `Build/Output/MeiMeiDXEv3_SMU_CoreUnlock.ffs`
+- `Build/Output/MeiMeiDXEv3_SMU_Core_Unlock.efi`
+- `Build/Output/MeiMeiDXEv3_SMU_Core_Unlock.ffs`
 
 For a host build, set `NO_CONTAINER=1` and `EDK2_DIR=/path/to/edk2`.
 

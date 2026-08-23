@@ -1,9 +1,9 @@
 [Defines]
-  PLATFORM_NAME                  = MeiMeiDXEv3_SMU_CoreUnlock
+  PLATFORM_NAME                  = MeiMeiDXEv3_SMU_Core_Unlock
   PLATFORM_GUID                  = 5f6a7b8c-9d0e-1f2a-3b4c-5d6e7f8a9b0c
   PLATFORM_VERSION               = 0.1
   DSC_SPECIFICATION              = 0x0001001A
-  OUTPUT_DIRECTORY               = Build/MeiMeiDXEv3_SMU_CoreUnlock
+  OUTPUT_DIRECTORY               = Build/MeiMeiDXEv3_SMU_Core_Unlock
   SUPPORTED_ARCHITECTURES        = X64
   BUILD_TARGETS                  = DEBUG|RELEASE
   SKUID_IDENTIFIER               = DEFAULT

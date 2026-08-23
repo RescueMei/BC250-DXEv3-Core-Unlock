@@ -1,6 +1,6 @@
 [Defines]
   DEC_SPECIFICATION              = 0x0001001A
-  PACKAGE_NAME                   = MeiMeiDXEv3_SMU_CoreUnlock
+  PACKAGE_NAME                   = MeiMeiDXEv3_SMU_Core_Unlock
   PACKAGE_GUID                   = 8d1f2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f
   PACKAGE_VERSION                = 0.1
 
