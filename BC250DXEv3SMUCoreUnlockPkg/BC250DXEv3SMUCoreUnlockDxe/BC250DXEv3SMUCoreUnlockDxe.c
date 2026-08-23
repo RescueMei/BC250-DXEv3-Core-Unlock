@@ -78,7 +78,7 @@ STATIC EFI_GUID  gBc250ColdBootVendorGuid = BC250_COLD_BOOT_VENDOR_GUID;
 // cold-boot driver's default text instead.
 //
 STATIC CONST CHAR16  mColdBootRequestMessage[] =
-  L"Learning factory core mask; performing one-time cold reboot.";
+  L"Performing one-time cold reboot to learn factory core mask.";
 
 #define MEIMEIDXEV3_DELAY_AFTER_WRITE_US  50000U
 

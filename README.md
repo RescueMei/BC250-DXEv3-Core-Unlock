@@ -52,7 +52,7 @@ captures it with a one-shot cold boot:
 
 The `MeiMeiDXEv3RequestColdBoot` variable has a payload of a `CHAR16` message
 displayed in the cold-boot driver's recovery countdown box; this driver supplies
-`"Learning factory core mask; performing one-time cold reboot."` 
+`"Performing one-time cold reboot to learn factory core mask."` 
 so the user can see why the board is cycling once.
 
 ## Variables
