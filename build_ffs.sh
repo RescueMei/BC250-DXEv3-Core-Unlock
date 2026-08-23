@@ -68,6 +68,7 @@ CONTAINER_WORKSPACE="/workspace/$(basename "$REPO_DIR")"
 SUBMODULES_RECURSIVE="${SUBMODULES_RECURSIVE:-0}"
 SUBMODULES_EXTRA="${SUBMODULES_EXTRA:-}"
 BUILD_MODULE="${BUILD_MODULE:-0}"
+PREBUILD_CMD="${PREBUILD_CMD:-}"
 
 find_basetool() {
   # Locate a built EDK II utility in either its wrapper or native binary path.
@@ -190,6 +191,11 @@ build_with_host_edk2() {
     exit 1
   fi
 
+  if [[ -n "$PREBUILD_CMD" ]]; then
+    echo "Running pre-build hook: $PREBUILD_CMD"
+    (cd "$REPO_DIR" && eval "$PREBUILD_CMD")
+  fi
+
   cd "$EDK2_DIR"
   export WORKSPACE="$EDK2_DIR"
   export PACKAGES_PATH="$REPO_DIR:$EDK2_DIR${PACKAGES_PATH:+:$PACKAGES_PATH}"
@@ -257,6 +263,7 @@ build_with_container() {
     -e SUBMODULES_RECURSIVE="$SUBMODULES_RECURSIVE" \
     -e SUBMODULES_EXTRA="$SUBMODULES_EXTRA" \
     -e BUILD_MODULE="$BUILD_MODULE" \
+    -e PREBUILD_CMD="$PREBUILD_CMD" \
     "$EDK2_IMAGE" \
     bash -lc '
       set -euo pipefail
@@ -379,6 +386,11 @@ build_with_container() {
         echo "error: edksetup.sh completed but build is not on PATH" >&2
         echo "PATH=$PATH" >&2
         exit 1
+      fi
+
+      if [[ -n "$PREBUILD_CMD" ]]; then
+        echo "Running pre-build hook: $PREBUILD_CMD"
+        (cd "$CONTAINER_WORKSPACE" && eval "$PREBUILD_CMD")
       fi
 
       echo "Running EDK II build..."
