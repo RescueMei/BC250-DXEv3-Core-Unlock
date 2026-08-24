@@ -46,14 +46,12 @@ captures it with a one-shot cold boot:
    check) -> set the non-volatile learn flag and the volatile
    `MeiMeiDXEv3RequestColdBoot` message (consumed by the
    `BC250-DXEv3-Cold-Boot` driver), then stop.
-2. On the cold boot the SMU state is clean: sample the current mask and persist
+
+2. Cold boot occurs (outside of this driver's control)
+
+3. On the following cold boot the SMU state is clean, so we sample the current mask (assumed to be the factory mask as long as a cold boot occurred) and persist
    it as `MeiMeiDXEv3CoreFactoryMaskVar`, clear the learn flag, then run the
    normal write logic.
-
-The `MeiMeiDXEv3RequestColdBoot` variable has a payload of a `CHAR16` message
-displayed in the cold-boot driver's recovery countdown box; this driver supplies
-`"Performing one-time cold reboot to learn factory core mask."` 
-so the user can see why the board is cycling once.
 
 ## Variables
 
@@ -70,7 +68,7 @@ The factory-mask record is validated by its own CRC-32 fingerprint of the
 stored mask byte; the live SMN register is never compared, because the core
 presence mask persists across warm resets and may hold a mask the driver
 applied on a previous boot. If the stored mask and its CRC do not match (or no
-valid record exists), a one-shot cold boot captures the clean factory mask.
+valid record exists), a one-shot cold boot is triggered to capture a clean factory core mask.
 The desired mask is the stored factory mask when disabled, `0xFF` when
 enabled, or the per-core custom mask when it is a valid CCX0/CCX1
 configuration (an invalid custom mask falls back to `DISABLED` and the factory
