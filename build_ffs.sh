@@ -212,6 +212,14 @@ build_with_host_edk2() {
     exit 1
   fi
 
+  export PATH="$EDK2_DIR/BaseTools/BinWrappers/PosixLike:$EDK2_DIR/BaseTools/Bin/Linux-x86_64:$PATH"
+
+  if ! command -v build >/dev/null 2>&1; then
+    echo "error: edksetup.sh completed but 'build' is not on PATH" >&2
+    echo "PATH=$PATH" >&2
+    exit 1
+  fi
+
   if [[ "$BUILD_MODULE" == "1" ]]; then
     build -a "$ARCH" -b "$TARGET" -t "$TOOL_CHAIN_TAG" -p "$REPO_DIR/$PLATFORM_DSC" -m "$REPO_DIR/$MODULE_INF"
   else
