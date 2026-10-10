@@ -10,6 +10,7 @@
 #include <BC250ColdBoot.h>
 #include <MeiMeiDXEv3ConfigVar.h>
 #include <MeiMeiDXEv3CoreUnlockProtocol.h>
+#include <MeiMeiDXEv3SmuUnlockProtocol.h>
 
 #include "Bc250SmuMailbox.h"
 
@@ -366,6 +367,33 @@ RequestColdBoot (
 }
 
 /**
+  Request privileged SMU access from the SMU-unlock driver for factory learning.
+
+  The unlock is normally gated by the shared SmuUnlock variable; a one-shot
+  learn needs privileged access regardless, so it asks the SMU-unlock driver to
+  grant it through the protocol's Grant() method. Non-fatal: if the protocol is
+  unavailable or the unlock fails, the learn simply cannot sample and bails.
+**/
+STATIC
+VOID
+RequestPrivilegedAccess (
+  VOID
+  )
+{
+  EFI_STATUS                       Status;
+  MEIMEIDXEV3_SMU_UNLOCK_PROTOCOL  *Unlock = NULL;
+
+  Status = gBS->LocateProtocol (&gMeiMeiDXEv3SmuUnlockProtocolGuid, NULL, (VOID **)&Unlock);
+  if (EFI_ERROR (Status) || (Unlock == NULL) || (Unlock->Grant == NULL)) {
+    DEBUG ((DEBUG_WARN, "BC250DXEv3SMUCoreUnlock: SMU-unlock protocol unavailable: %r\n", Status));
+    return;
+  }
+
+  Status = Unlock->Grant (Unlock);
+  DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: requested SMU access for learning: %r\n", Status));
+}
+
+/**
   Learn the factory core mask, using a one-shot cold boot when needed.
 
   A stored record is valid only when the mask byte matches its CRC-32
@@ -451,6 +479,10 @@ LearnFactoryMask (
     // clean factory mask. Capture it together with a CRC-32 fingerprint of the
     // mask byte so the record is self-validating on later boots.
     //
+    // Learn needs privileged SMU access; request it from the SMU-unlock driver
+    // (which normally gates the unlock on the SmuUnlock variable).
+    //
+    RequestPrivilegedAccess ();
     MaskValue = Bc250SmnRead32 (BC250_CORE_MASK_REG);
     Record.FactoryMask   = (UINT8)(MaskValue & 0xFFU);
     Record.Reserved[0]   = 0;
