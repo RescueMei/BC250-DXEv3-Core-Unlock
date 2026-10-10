@@ -1,0 +1,3 @@
+[submodule "DXEBUILD"]
+	path = DXEBUILD
+	url = git@github.com:RescueMei/BC250-DXEv3-DXEBUILD.git
