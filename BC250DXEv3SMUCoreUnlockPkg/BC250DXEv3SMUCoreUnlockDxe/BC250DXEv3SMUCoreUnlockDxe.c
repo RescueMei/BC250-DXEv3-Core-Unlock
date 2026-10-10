@@ -419,10 +419,13 @@ LearnFactoryMask (
 {
   EFI_STATUS            Status;
   FACTORY_MASK_RECORD   Record;
+  FACTORY_MASK_RECORD   VerifyRecord;
   BOOLEAN               HaveRecord;
   BOOLEAN               RecordValid;
   UINT8                 LearnFlag;
+  UINT8                 RetryCount;
   BOOLEAN               HaveLearnFlag;
+  BOOLEAN               HaveRetry;
   UINT32                MaskValue;
 
   *FactoryMask = 0;
@@ -498,10 +501,24 @@ LearnFactoryMask (
       return Status;
     }
 
+    //
+    // Read the record back and confirm the exact mask/fingerprint before
+    // clearing the learn flag, so a record that would fail validation on the
+    // next boot cannot keep re-triggering cold boots.
+    //
+    Status = ReadFactoryRecord (&VerifyRecord, &HaveRecord);
+    if (EFI_ERROR (Status) || !HaveRecord ||
+        VerifyRecord.FactoryMask != Record.FactoryMask ||
+        VerifyRecord.OriginalCrc32 != Record.OriginalCrc32) {
+      DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: factory record did not verify after store\n"));
+      return EFI_DEVICE_ERROR;
+    }
+
     Status = WriteSingleByteVar (MEIMEIDXEV3_LEARN_FLAG_VAR_NAME, 0);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_WARN, "BC250DXEv3SMUCoreUnlock: failed to clear learn flag: %r\n", Status));
     }
+    WriteSingleByteVar (MEIMEIDXEV3_LEARN_RETRY_VAR_NAME, 0);
 
     *FactoryMask = Record.FactoryMask;
     *HaveFactory = TRUE;
@@ -510,13 +527,28 @@ LearnFactoryMask (
 
   //
   // No usable factory record and no learn in progress: start the one-shot
-  // cold boot.
+  // cold boot, bounded by a persisted retry counter so no state can loop
+  // reboots forever.
   //
+  ReadSingleByteVar (MEIMEIDXEV3_LEARN_RETRY_VAR_NAME, &RetryCount, &HaveRetry);
+  if (HaveRetry && RetryCount >= MEIMEIDXEV3_MAX_LEARN_ATTEMPTS) {
+    DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: giving up factory learning after %u attempts\n", RetryCount));
+    return EFI_SUCCESS;
+  }
+
   Status = WriteSingleByteVar (MEIMEIDXEV3_LEARN_FLAG_VAR_NAME, 1);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: failed to set learn flag: %r\n", Status));
     return Status;
   }
+
+  ReadSingleByteVar (MEIMEIDXEV3_LEARN_FLAG_VAR_NAME, &LearnFlag, &HaveLearnFlag);
+  if (!HaveLearnFlag || LearnFlag == 0) {
+    DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: learn flag did not persist; not requesting cold boot\n"));
+    return EFI_SUCCESS;
+  }
+
+  WriteSingleByteVar (MEIMEIDXEV3_LEARN_RETRY_VAR_NAME, (UINT8)((HaveRetry ? RetryCount : 0) + 1));
 
   Status = RequestColdBoot ();
   if (EFI_ERROR (Status)) {

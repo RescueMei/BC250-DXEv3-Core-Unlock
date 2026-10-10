@@ -22,6 +22,13 @@ extern EFI_GUID  gMeiMeiDXEv3ConfigVarGuid;
 //
 #define MEIMEIDXEV3_FACTORY_MASK_VAR_NAME  L"MeiMeiDXEv3CoreFactoryMaskVar"
 #define MEIMEIDXEV3_LEARN_FLAG_VAR_NAME    L"MeiMeiDXEv3LearnFactoryFlag"
+#define MEIMEIDXEV3_LEARN_RETRY_VAR_NAME   L"MeiMeiDXEv3CoreLearnRetries"
+
+//
+// Maximum one-shot cold-boot learning attempts before giving up (a persisted
+// counter, cleared once a capture is verified).
+//
+#define MEIMEIDXEV3_MAX_LEARN_ATTEMPTS  3U
 
 //
 // One-shot cold-boot request. The variable name and vendor GUID are defined in
