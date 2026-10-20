@@ -406,6 +406,7 @@ RequestPrivilegedAccess (
   @param[out] FactoryMask   Learned factory mask (low byte).
   @param[out] HaveFactory   TRUE when a factory mask is known.
   @param[out] ColdBooted    TRUE when a cold boot was requested this boot.
+  @param[out] Captured      TRUE when the factory mask was captured this boot.
 
   @retval EFI_STATUS  Result of the variable operations.
 **/
@@ -414,7 +415,8 @@ EFI_STATUS
 LearnFactoryMask (
   OUT UINT8    *FactoryMask,
   OUT BOOLEAN  *HaveFactory,
-  OUT BOOLEAN  *ColdBooted
+  OUT BOOLEAN  *ColdBooted,
+  OUT BOOLEAN  *Captured
   )
 {
   EFI_STATUS            Status;
@@ -431,6 +433,7 @@ LearnFactoryMask (
   *FactoryMask = 0;
   *HaveFactory = FALSE;
   *ColdBooted  = FALSE;
+  *Captured    = FALSE;
 
   Status = ReadFactoryRecord (&Record, &HaveRecord);
   if (EFI_ERROR (Status)) {
@@ -522,6 +525,7 @@ LearnFactoryMask (
 
     *FactoryMask = Record.FactoryMask;
     *HaveFactory = TRUE;
+    *Captured    = TRUE;
     return EFI_SUCCESS;
   }
 
@@ -838,6 +842,7 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   UINT8        FactoryMask;
   BOOLEAN      HaveFactory;
   BOOLEAN      ColdBooted;
+  BOOLEAN      Captured;
   BOOLEAN      MaskChanged;
   UINT8        CustomMask;
   UINT8        DesiredMask;
@@ -878,7 +883,7 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   //
   // Factory-mask acquisition (one-shot cold boot).
   //
-  Status = LearnFactoryMask (&FactoryMask, &HaveFactory, &ColdBooted);
+  Status = LearnFactoryMask (&FactoryMask, &HaveFactory, &ColdBooted, &Captured);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_WARN, "BC250DXEv3SMUCoreUnlock: factory-mask learning failed: %r\n", Status));
     return EFI_SUCCESS;
@@ -887,14 +892,35 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   if (ColdBooted) {
     //
     // Cold boot requested; MeiMeiDXEv3RequestColdBoot is volatile and one-shot.
-    // Do nothing else this boot.
+    // Disable the configured unlock while the factory capture is pending so
+    // the capture boot leaves the stock core mask in place.
     //
-    DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: cold boot requested to learn factory mask\n"));
+    Config.CoreUnlock = CORE_UNLOCK_DISABLED;
+    Status = WriteCoreConfig (&Config);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: failed to persist disabled state: %r\n", Status));
+    }
+    DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: cold boot requested to learn factory mask; unlock disabled\n"));
     return EFI_SUCCESS;
   }
 
   if (!HaveFactory) {
     DEBUG ((DEBUG_WARN, "BC250DXEv3SMUCoreUnlock: no factory mask available\n"));
+    return EFI_SUCCESS;
+  }
+
+  if (Captured) {
+    //
+    // The factory mask was just learned on this cold boot. Persist DISABLED
+    // and leave the stock mask in place; the configured profile is applied on
+    // a later boot once the user re-enables the driver.
+    //
+    Config.CoreUnlock = CORE_UNLOCK_DISABLED;
+    Status = WriteCoreConfig (&Config);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: failed to persist disabled state: %r\n", Status));
+    }
+    DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: factory mask captured; unlock disabled; leaving stock mask\n"));
     return EFI_SUCCESS;
   }
 
