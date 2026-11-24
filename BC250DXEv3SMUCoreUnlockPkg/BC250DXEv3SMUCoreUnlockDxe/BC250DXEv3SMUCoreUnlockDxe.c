@@ -64,8 +64,7 @@
 //
 // GUID for the shared MeiMeiDXEv3 configuration variables.
 //
-EFI_GUID  gMeiMeiDXEv3ConfigVarGuid = \
-  { 0x49CC168D, 0xE8B0, 0x4613, { 0xA8, 0x07, 0x16, 0x96, 0x99, 0x86, 0x72, 0x6F } };
+EFI_GUID  gMeiMeiDXEv3ConfigVarGuid = MEIMEIDXEV3_CONFIG_VAR_GUID;
 
 //
 // One-shot cold-boot request namespace, as defined by the BC250-DXEv3-Cold-Boot
@@ -118,6 +117,7 @@ ReadCoreConfig (
 {
   EFI_STATUS  Status;
   UINTN       DataSize;
+  UINT32      Attributes;
 
   DataSize = sizeof (CORE_CONFIG);
   ZeroMem (Config, sizeof (CORE_CONFIG));
@@ -125,7 +125,7 @@ ReadCoreConfig (
   Status = gRT->GetVariable (
                   MEIMEIDXEV3_CORE_VAR_NAME,
                   &gMeiMeiDXEv3ConfigVarGuid,
-                  NULL,
+                  &Attributes,
                   &DataSize,
                   Config
                   );
@@ -137,6 +137,13 @@ ReadCoreConfig (
   if (EFI_ERROR (Status)) {
     ZeroMem (Config, sizeof (CORE_CONFIG));
     return EFI_SUCCESS;
+  }
+
+  if (Attributes != MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES) {
+    DEBUG ((DEBUG_WARN,
+            "BC250DXEv3SMUCoreUnlock: %s has attributes 0x%x (want 0x%x), core unlock disabled\n",
+            MEIMEIDXEV3_CORE_VAR_NAME, Attributes, MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES));
+    ZeroMem (Config, sizeof (CORE_CONFIG));
   }
 
   return EFI_SUCCESS;
