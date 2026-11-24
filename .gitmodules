@@ -1,3 +1,7 @@
 [submodule "DXEBUILD"]
 	path = DXEBUILD
 	url = git@github.com:RescueMei/BC250-DXEv3-DXEBUILD.git
+[submodule "BC250-DXEv3-Shared"]
+	path = BC250-DXEv3-Shared
+	url = git@github.com:RescueMei/BC250-DXEv3-Shared.git
+	branch = feature/shared-abi
