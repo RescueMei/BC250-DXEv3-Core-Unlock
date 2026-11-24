@@ -1,0 +1,18 @@
+{
+  "protocols": [
+    {
+      "provider": "BC250-DXEv3-SMU-Unlock/BC250DXEv3SMUUnlockPkg/Include/MeiMeiDXEv3SmuUnlockProtocol.h",
+      "provider_sha256": "014d69973d4c4fe255cfa0c17975058b817aa3e0540a1ab1e94bbbb15498bcab",
+      "consumers": [
+        "BC250DXEv3SMUCoreUnlockPkg/Include/MeiMeiDXEv3SmuUnlockProtocol.h"
+      ]
+    },
+    {
+      "provider": "BC250-DXEv3-Cold-Boot/BC250DXEv3ColdBootPkg/Include/BC250ColdBoot.h",
+      "provider_sha256": "c6e79027e92e3446b84b285c009016f18bfe5ef0ec4cbd9e47ea37570f286ff7",
+      "consumers": [
+        "BC250DXEv3SMUCoreUnlockPkg/Include/BC250ColdBoot.h"
+      ]
+    }
+  ]
+}

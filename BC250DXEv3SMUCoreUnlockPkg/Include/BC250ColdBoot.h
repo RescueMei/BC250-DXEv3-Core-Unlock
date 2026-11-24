@@ -21,7 +21,8 @@
 #define BC250_COLD_BOOT_VARIABLE_NAME  L"MeiMeiDXEv3RequestColdBoot"
 
 // Vendor GUID shared by all MeiMeiDXEv3 configuration variables.
-#define BC250_COLD_BOOT_VENDOR_GUID \
-  { 0x49cc168d, 0xe8b0, 0x4613, { 0xa8, 0x07, 0x16, 0x96, 0x99, 0x86, 0x72, 0x6f } }
+#include <Config/MeiMeiDXEv3Config.h>
+
+#define BC250_COLD_BOOT_VENDOR_GUID  MEIMEIDXEV3_CONFIG_VAR_GUID
 
 #endif
