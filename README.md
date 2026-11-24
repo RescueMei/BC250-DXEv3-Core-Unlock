@@ -1,151 +1,139 @@
 # BC250-DXEv3-Core-Unlock
 
-My v3 SMU Core Unlock DXE Driver. Uses arbitrary writes to the core mask
-through the SMU's protected mem64 window (Queue 3 messages `0x2B`/`0x2C`) instead
-of the previous exploit that could only write `0xFF`.
+Core-unlock DXE driver for the BC-250. It writes the CPU core presence mask
+through the SMU's protected mem64 window (Queue 3 messages `0x2B`/`0x2C`),
+which allows arbitrary per-core selection instead of the older all-cores-only
+write. It also learns and publishes the factory core mask so a reset can always
+restore a sane configuration.
 
-Based on set_core_mask.py in https://github.com/rw-r-r-0644/bc250-smu-unlock
+> **Firmware warning:** this driver writes SMU-protected state and may request a
+> cold boot. Keep a recovery path before enabling it.
 
-## Package
-
-`BC250DXEv3SMUCoreUnlockPkg/` builds the DXE module `MeiMeiDXEv3_SMU_Core_Unlock`.
-
-This driver is uses the `MeiMeiDXEv3CoreVar` configuration published by
-the `BC250-DXEv3-Menu-Driver`:
-
-| CoreUnlock | Action |
-| --- | --- |
-| `DISABLED` (0) | Restore the learned factory mask. |
-| `ALL_CORES` (1) | Write `0xFF` (all 8 cores). |
-| `CUSTOM` (2) | Write the per-core mask from `Core0`..`Core7`, but only if it is a valid CCX0/CCX1 configuration (see below); otherwise fall back to `DISABLED`. |
-
-## Custom core mask validation
-
-A custom mask is only applied when it is a valid CCX0/CCX1 configuration.
-Cores 0-3 belong to CCX0 (mask bits 0-3) and cores 4-7 belong to CCX1 (mask
-bits 4-7):
-
-* CCX0 must always have at least one core enabled.
-* CCX1 must have the same number of cores enabled as CCX0, unless CCX1 has zero
-  cores enabled (all of CCX1 off is always valid).
-
-When the custom mask violates these rules, the driver persists `CoreUnlock` as
-`DISABLED` and writes the learned factory mask instead, so the system always
-boots to a sane core configuration.
-
-Opening the SMU's protected functions is handled by the separate SMU-unlock
-driver; this driver only probes availability (Queue 3 message `0x2A`) and skips
-the write when the protected cluster is closed.
-
-## Factory-mask learning (one-shot cold boot)
-
-A clean factory mask is needed for the "disabled -> restore" path. The driver
-captures it with a one-shot cold boot:
-
-1. No valid factory mask known (record absent, undersized, or failing its CRC
-   check) -> set the non-volatile learn flag and the volatile
-   `MeiMeiDXEv3RequestColdBoot` message (consumed by the
-   `BC250-DXEv3-Cold-Boot` driver), then stop.
-
-2. Cold boot occurs (outside of this driver's control)
-
-3. On the following cold boot the SMU state is clean, so we sample the current mask (assumed to be the factory mask as long as a cold boot occurred) and persist
-   it as `MeiMeiDXEv3CoreFactoryMaskVar`, clear the learn flag, then run the
-   normal write logic.
-
-## Variables
-
-| Variable | Size | Purpose |
-| --- | --- | --- |
-| `MeiMeiDXEv3CoreVar` | 9 B | Core-unlock configuration (menu driver). |
-| `MeiMeiDXEv3CoreFactoryMaskVar` | 8 B | `FACTORY_MASK_RECORD`: learned factory mask (low byte) + CRC-32 hash of the original 32-bit mask register value. |
-| `MeiMeiDXEv3LearnFactoryFlag` | 1 B | One-shot cold-boot learn marker. |
-
-All use vendor GUID `49CC168D-E8B0-4613-A807-16969986726F` with
-`BOOTSERVICE | RUNTIME | NON_VOLATILE` attributes.
-
-The factory-mask record is validated by its own CRC-32 fingerprint of the
-stored mask byte; the live SMN register is never compared, because the core
-presence mask persists across warm resets and may hold a mask the driver
-applied on a previous boot. If the stored mask and its CRC do not match (or no
-valid record exists), a one-shot cold boot is triggered to capture a clean factory core mask.
-The desired mask is the stored factory mask when disabled, `0xFF` when
-enabled, or the per-core custom mask when it is a valid CCX0/CCX1
-configuration (an invalid custom mask falls back to `DISABLED` and the factory
-mask); a warm reset is issued only when the current mask differs from the
-desired mask.
-
-## Protocol
-
-The driver publishes `MEIMEIDXEV3_CORE_UNLOCK_PROTOCOL` so other DXE drivers
-can read the learned factory core mask at runtime:
+## At a glance
 
 | Item | Value |
 | --- | --- |
-| GUID | `gMeiMeiDXEv3CoreUnlockProtocolGuid` (`687319be-5bc5-44a7-8e60-e5f1e5fd0168`) |
-| Header | `<MeiMeiDXEv3CoreUnlockProtocol.h>` |
-| Service | `GetFactoryMask (This, OUT UINT8 *FactoryMask)` |
+| Package / module | `BC250DXEv3SMUCoreUnlockPkg` -> `MeiMeiDXEv3_SMU_Core_Unlock.efi` |
+| Depex | `gEfiVariableArchProtocolGuid AND gMeiMeiDXEv3SmuUnlockProtocolGuid` |
+| Produces | `gMeiMeiDXEv3CoreUnlockProtocolGuid` (`GetFactoryMask`) |
+| Consumes | SMU-unlock protocol, `MeiMeiDXEv3CoreVar`, cold-boot request variable |
+| Configuration | `MeiMeiDXEv3CoreVar`, 9 bytes |
+| SMU SRAM | none (SMN mask write through Q3) |
+| Compliance | [COMPLIANCE.md](COMPLIANCE.md) |
 
-`GetFactoryMask` re-reads `MeiMeiDXEv3CoreFactoryMaskVar` and validates its
-CRC-32 fingerprint on every call, so the returned value always matches the
-mask the driver itself uses. It returns `EFI_NOT_FOUND` until the one-shot
-cold-boot learning cycle has persisted a record.
+## Dependencies
 
-The protocol is installed unconditionally at the top of the entry point, so a
-consumer may add it to its `[Depex]` on every boot:
+`BC250-DXEv3-SMU-Unlock` must have installed its protocol; the Depex enforces
+that. The one-shot learning path asks that driver for privileged access through
+`Grant()`. A cold boot is requested through the `BC250-DXEv3-Cold-Boot` variable
+contract, not by calling that driver directly.
 
-```ini
-[Depex]
-  gMeiMeiDXEv3CoreUnlockProtocolGuid
-```
+## How it works
 
-Consumer lookup:
+The mask lives in SMN `0x0115A870`; the driver reads it, compares it with the
+desired value, writes through the Q3 window, delays briefly, and reads it back
+to confirm. A warm reset is issued only when the mask actually changed.
+
+Mode selection:
+
+| `CoreUnlock` | Action |
+| --- | --- |
+| `DISABLED` (0) | Restore the learned factory mask. |
+| `ALL_CORES` (1) | Write `0xFF` (all eight cores). |
+| `CUSTOM` (2) | Write the per-core mask from `Core0`..`Core7`, if it is a valid CCX0/CCX1 configuration; otherwise persist `DISABLED` and restore the factory mask. |
+
+CCX rules: cores 0-3 are CCX0, cores 4-7 are CCX1. CCX0 must keep at least one
+core enabled. CCX1 must enable either zero cores or the same number as CCX0.
+An invalid custom mask is never applied.
+
+### Factory-mask learning
+
+A clean factory mask is required for the disabled/restore path:
+
+1. If no valid record exists (absent, undersized, or failing its CRC), the
+   driver sets the non-volatile learn flag and writes the volatile
+   `MeiMeiDXEv3RequestColdBoot` message with a human-readable reason, then stops
+   feature work for this boot.
+2. `BC250-DXEv3-Cold-Boot` performs the cold boot.
+3. On the clean boot the driver samples the current mask, persists it with a
+   CRC-32 fingerprint, clears the learn flag, and continues with the normal
+   write logic.
+
+Learning runs before any mode-dependent work, so it also happens when core
+unlock is disabled. The live register is deliberately never used as the factory
+reference: it persists across warm resets and may already hold an applied mask.
+
+## Configuration
+
+Shared `CORE_CONFIG` record:
+
+- Header: `BC250-DXEv3-Shared/MeiMeiDXEv3SharedPkg/Include/Config/MeiMeiDXEv3Config.h`
+- Variable: `MEIMEIDXEV3_CORE_VAR_NAME` (`MeiMeiDXEv3CoreVar`)
+- Fields: `CoreUnlock`, `Core0`..`Core7`
+
+A missing or unreadable variable means "all zeros" (disabled). An oversized or
+wrong-attribute variable produces no mask write and the boot continues.
+
+Driver-owned persisted records (same vendor GUID, same attributes):
+
+| Variable | Size | Purpose |
+| --- | --- | --- |
+| `MeiMeiDXEv3CoreFactoryMaskVar` | 8 B | Learned mask plus CRC-32 fingerprint. |
+| `MeiMeiDXEv3LearnFactoryFlag` | 1 B | One-shot cold-boot learn marker. |
+
+## Protocols
+
+`gMeiMeiDXEv3CoreUnlockProtocolGuid`
+(`687319BE-5BC5-44A7-8E60-E5F1E5FD0168`), header
+`<MeiMeiDXEv3CoreUnlockProtocol.h>`.
+
+`GetFactoryMask()` re-reads and CRC-validates the stored record on every call,
+so it always agrees with the mask the driver uses. It returns `EFI_NOT_FOUND`
+until learning has persisted a record. The protocol is installed
+unconditionally at the top of the entry point.
 
 ```c
 #include <Library/UefiBootServicesTableLib.h>
 #include <MeiMeiDXEv3CoreUnlockProtocol.h>
 
-MEIMEIDXEV3_CORE_UNLOCK_PROTOCOL  *Protocol;
+MEIMEIDXEV3_CORE_UNLOCK_PROTOCOL  *Core;
 UINT8                              FactoryMask;
 
 Status = gBS->LocateProtocol (&gMeiMeiDXEv3CoreUnlockProtocolGuid, NULL,
-                              (VOID **)&Protocol);
-if (EFI_ERROR (Status)) {
-  // core-unlock driver not available
+                              (VOID **)&Core);
+if (!EFI_ERROR (Status)) {
+  Status = Core->GetFactoryMask (Core, &FactoryMask);
 }
-Status = Protocol->GetFactoryMask (Protocol, &FactoryMask);
 ```
 
-A consumer also needs `UefiBootServicesTableLib` in its `[LibraryClasses]`, the
-package `BC250DXEv3SMUCoreUnlockPkg.dec` in its `[Packages]`, and the protocol
-GUID in its `[Protocols]`:
+A consumer needs `BC250DXEv3SMUCoreUnlockPkg.dec` in `[Packages]`, the GUID in
+`[Protocols]`, and the protocol GUID in `[Depex]` if it must wait.
 
-```ini
-[Packages]
-  MdePkg/MdePkg.dec
-  BC250DXEv3SMUCoreUnlockPkg/BC250DXEv3SMUCoreUnlockPkg.dec
+## SMU SRAM placement
 
-[LibraryClasses]
-  UefiBootServicesTableLib
-
-[Protocols]
-  gMeiMeiDXEv3CoreUnlockProtocolGuid
-
-[Depex]
-  gMeiMeiDXEv3CoreUnlockProtocolGuid
-```
+No lane in the shared map. The driver only uses the Q3 SMN window. See
+[SMU_MEMORY_MAP.md](https://github.com/RescueMei/BC250-DXEv3-Shared/blob/main/docs/SMU_MEMORY_MAP.md).
 
 ## Build
 
 ```bash
-./build_ffs.sh
+./build_ffs.sh                                  # container build
+NO_CONTAINER=1 EDK2_DIR=/path/to/edk2 ./build_ffs.sh   # host build
 ```
 
-A container build (podman) produces:
+Output:
 
 - `Build/Output/MeiMeiDXEv3_SMU_Core_Unlock.efi`
 - `Build/Output/MeiMeiDXEv3_SMU_Core_Unlock.ffs`
 
-For a host build, set `NO_CONTAINER=1` and `EDK2_DIR=/path/to/edk2`.
+## Validation
 
-The `.ffs` can be inserted into an AMI DXE firmware volume with UEFITool.
+2026-11-24, eight-driver stack, configured ceiling 2100 MHz: `DEPLOY_OK`,
+actual clock 2100 MHz sustained, rail voltage <= 1018 mV, 193 W GPU peak, 82 C
+peak, 0 ring timeouts, 0 C2P timeouts, board reachable after the workload. See
+[COMPLIANCE.md](COMPLIANCE.md).
+
+## Credits
+
+Based on `set_core_mask.py` from
+[rw-r-r-0644/bc250-smu-unlock](https://github.com/rw-r-r-0644/bc250-smu-unlock).
