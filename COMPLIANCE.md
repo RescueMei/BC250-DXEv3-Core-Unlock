@@ -20,7 +20,7 @@ Checklist and evidence:
 - [x] SMU writes are read-back verified; reserved fields preserved.
 - [x] Payload is 4-byte aligned, fits its lane, and was injection-tested.
 - [x] Individual driver build passed.
-- [x] Eight-driver integrated build passed.
+- [x] Nine-driver integrated build passed.
 - [x] BC250 deployment reached `DEPLOY_OK` with expected state.
 - [x] Light and heavy workload validation completed, including actual clock and thermal checks.
 - [x] No generated payload headers, build output, secrets, or temporary files staged.
@@ -52,10 +52,10 @@ Factory-mask learning runs before any mode-dependent logic, so it still occurs w
 ## Validation record
 
 - Individual driver build: passed (`./build_ffs.sh`, RELEASE_CLANGDWARF).
-- Eight-driver integrated build: passed (`BC250-DXEv3-BIOSMOD/build_all_ffs.sh`).
+- Nine-driver integrated build: passed (`BC250-DXEv3-BIOSMOD/build_all_ffs.sh`).
 - BC250 deployment: `DEPLOY_OK ceiling=2100 cores=8 nopatch=False nogov=False`.
 - Workload: 60 s Unigine Valley + 60 s Superposition, 8 cores, patch enabled.
-- Actual clock: 2100 MHz sustained; rail voltage: <= 1018 mV; GPU power: 193 W peak.
+- Actual clock: 2100 MHz sustained; rail voltage: <= 1006 mV; GPU power: 202 W peak.
 - Peak temperature: 82 C (85 C governor target, 87 C hard cap).
 - Ring timeouts: 0; C2P timeouts: 0; board reachable after the workload.
 

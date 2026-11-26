@@ -130,8 +130,8 @@ Output:
 
 ## Validation
 
-2026-11-24, eight-driver stack, configured ceiling 2100 MHz: `DEPLOY_OK`,
-actual clock 2100 MHz sustained, rail voltage <= 1018 mV, 193 W GPU peak, 82 C
+2026-11-25, nine-driver stack, configured ceiling 2100 MHz: `DEPLOY_OK`,
+actual clock 2100 MHz sustained, rail voltage <= 1006 mV, 202 W GPU peak, 82 C
 peak, 0 ring timeouts, 0 C2P timeouts, board reachable after the workload. See
 [COMPLIANCE.md](COMPLIANCE.md).
 
