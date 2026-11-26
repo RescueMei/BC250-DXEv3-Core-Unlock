@@ -1,11 +1,11 @@
 # Core Unlock Compliance
 
 Driver: `BC250-DXEv3-Core-Unlock`
-Shared package pin: `1974a09`.
+Shared package pin: `2e2e921`.
 
 Checklist and evidence:
 
-- [x] Shared package version/pin recorded (`1974a09`).
+- [x] Shared package version/pin recorded (`2e2e921`).
 - [x] Configuration structs/constants come from the shared package; no local duplicates.
 - [x] Public protocol copies match the provider ABI; drift check passed.
 - [x] Driver-owned variable names/layouts documented.
