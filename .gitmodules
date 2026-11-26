@@ -4,4 +4,4 @@
 [submodule "BC250-DXEv3-Shared"]
 	path = BC250-DXEv3-Shared
 	url = git@github.com:RescueMei/BC250-DXEv3-Shared.git
-	branch = feature/shared-abi
+	branch = main

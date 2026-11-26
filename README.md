@@ -83,6 +83,8 @@ Driver-owned persisted records (same vendor GUID, same attributes):
 
 ## Protocols
 
+Also publishes `gMeiMeiDXEv3DriverInfoProtocolGuid` with its name, version, module GUID, config schema, and payload version for the `BC250-DXEv3-Driver-Info` telemetry driver.
+
 `gMeiMeiDXEv3CoreUnlockProtocolGuid`
 (`687319BE-5BC5-44A7-8E60-E5F1E5FD0168`), header
 `<MeiMeiDXEv3CoreUnlockProtocol.h>`.

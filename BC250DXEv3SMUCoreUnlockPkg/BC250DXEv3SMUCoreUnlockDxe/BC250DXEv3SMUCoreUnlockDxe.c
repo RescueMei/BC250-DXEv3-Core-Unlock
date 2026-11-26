@@ -13,6 +13,25 @@
 #include <MeiMeiDXEv3SmuUnlockProtocol.h>
 
 #include "Bc250SmuMailbox.h"
+#include <Protocol/MeiMeiDXEv3DriverInfo.h>
+
+//
+// Driver identity reported to the BC250-DXEv3-Driver-Info telemetry driver.
+//
+#define BC250_CORE_UNLOCK_VERSION  MEIMEIDXEV3_MAKE_VERSION (1, 0, 0)
+
+STATIC EFI_HANDLE  mDriverInfoHandle = NULL;
+
+STATIC CONST MEIMEIDXEV3_DRIVER_INFO  mDriverInfo = {
+  MEIMEIDXEV3_DRIVER_INFO_REVISION,
+  sizeof (MEIMEIDXEV3_DRIVER_INFO),
+  L"Core-Unlock",
+  BC250_CORE_UNLOCK_VERSION,
+  { 0x7A8B9C0D, 0x1E2F, 0x3A4B, { 0x5C, 0x6D, 0x7E, 0x8F, 0x9A, 0x0B, 0x1C, 0x2D } },
+  MEIMEIDXEV3_CORE_SCHEMA,
+  0,
+  MEIMEIDXEV3_DRIVER_CAP_CONFIG
+};
 
 //
 // This DXE driver is the only component that manipulates the core presence
@@ -855,6 +874,22 @@ BC250DXEv3SMUCoreUnlockEntryPoint (
   UINT8        DesiredMask;
 
   DEBUG ((DEBUG_INFO, "BC250DXEv3SMUCoreUnlock: entry\n"));
+  //
+  // Publish this driver's identity record for the telemetry driver before any
+  // early return.
+  //
+  if (mDriverInfoHandle == NULL) {
+    Status = gBS->InstallProtocolInterface (
+                    &mDriverInfoHandle,
+                    &gMeiMeiDXEv3DriverInfoProtocolGuid,
+                    EFI_NATIVE_INTERFACE,
+                    (VOID *)&mDriverInfo
+                    );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUCoreUnlock: driver info install failed: %r\n", Status));
+    }
+  }
+
 
   //
   // Publish the core-unlock protocol before any early returns so a consumer

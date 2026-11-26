@@ -27,6 +27,7 @@
   UefiRuntimeServicesTableLib
 
 [Protocols]
+  gMeiMeiDXEv3DriverInfoProtocolGuid
   gMeiMeiDXEv3CoreUnlockProtocolGuid
   gMeiMeiDXEv3SmuUnlockProtocolGuid
 

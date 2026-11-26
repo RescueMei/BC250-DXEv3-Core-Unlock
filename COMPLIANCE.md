@@ -11,6 +11,7 @@ Checklist and evidence:
 - [x] Driver-owned variable names/layouts documented.
 - [x] SMU SRAM allocations match `docs/SMU_MEMORY_MAP.md`; no overlap.
 - [x] Depex is correct; public protocol is installed unconditionally.
+- [x] Driver info record installed unconditionally.
 - [x] Feature-disabled path performs no feature writes.
 - [x] Missing/malformed config is rejected safely; boot continues.
 - [x] Factory learning still occurs when the feature is disabled (Core/CU).
